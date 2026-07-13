@@ -98,15 +98,15 @@ def http_json(
 @dataclass
 class FrameState:
     lock: threading.Lock
-    pixels: list[list[int]]
+    art: list[list[int]] | None
     is_playing: bool
     has_track: bool
     title: str
     artists: str
     track_id: str | None
-    angle: float
     status: str
     updated_at: float
+    art_version: int
 
 
 def blank_pixels() -> list[list[int]]:
@@ -398,35 +398,106 @@ PAGE_HTML = """<!doctype html>
     </div>
   </div>
   <script>
+    const MATRIX = 16;
+    const RPM = 18;
     const matrix = document.getElementById("matrix");
     const leds = [];
-    for (let i = 0; i < 256; i++) {
+    for (let i = 0; i < MATRIX * MATRIX; i++) {
       const d = document.createElement("div");
       d.className = "led";
       matrix.appendChild(d);
       leds.push(d);
     }
 
-    async function tick() {
-      try {
-        const res = await fetch("/api/frame");
-        const data = await res.json();
-        for (let i = 0; i < 256; i++) {
-          const [r, g, b] = data.pixels[i];
-          leds[i].style.background = `rgb(${r},${g},${b})`;
+    let art = null;
+    let artVersion = -1;
+    let hasTrack = false;
+    let isPlaying = false;
+    let angle = 0;
+    let lastTs = performance.now();
+
+    function sampleArt(fx, fy) {
+      const x = Math.floor(fx);
+      const y = Math.floor(fy);
+      if (x < 0 || y < 0 || x >= MATRIX || y >= MATRIX || !art) return [0, 0, 0];
+      return art[y * MATRIX + x];
+    }
+
+    function renderVinyl(angleDeg) {
+      const cx = (MATRIX - 1) * 0.5;
+      const cy = (MATRIX - 1) * 0.5;
+      const radius = MATRIX * 0.5 - 0.6;
+      const labelR = radius * 0.22;
+      const holeR = radius * 0.08;
+      const rad = angleDeg * Math.PI / 180;
+      const cosA = Math.cos(rad);
+      const sinA = Math.sin(rad);
+
+      for (let y = 0; y < MATRIX; y++) {
+        for (let x = 0; x < MATRIX; x++) {
+          const dx = x - cx;
+          const dy = y - cy;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          let r = 0, g = 0, b = 0;
+
+          if (!hasTrack || !art) {
+            if (dist > radius - 0.55 && dist < radius + 0.35) {
+              r = g = 28; b = 32;
+            }
+          } else if (dist <= radius) {
+            const sx = cosA * dx + sinA * dy + cx;
+            const sy = -sinA * dx + cosA * dy + cy;
+            [r, g, b] = sampleArt(sx, sy);
+            if (dist <= holeR) {
+              r = g = b = 0;
+            } else if (dist <= labelR) {
+              r = (r * 0.18) | 0; g = (g * 0.18) | 0; b = (b * 0.18) | 0;
+            }
+            if (dist > radius - 0.85) {
+              r = (r * 0.55) | 0; g = (g * 0.55) | 0; b = (b * 0.55) | 0;
+            }
+          }
+          leds[y * MATRIX + x].style.background = `rgb(${r},${g},${b})`;
         }
-        document.getElementById("title").textContent = data.has_track ? data.title : "Ничего не играет";
-        document.getElementById("artists").textContent = data.has_track ? data.artists : "Включи трек в Spotify";
+      }
+    }
+
+    async function syncSpotify() {
+      try {
+        const res = await fetch("/api/state");
+        const data = await res.json();
+        hasTrack = !!data.has_track;
+        isPlaying = !!data.is_playing;
+        if (data.art_version !== artVersion) {
+          artVersion = data.art_version;
+          art = data.art;
+          angle = 0;
+        }
+        document.getElementById("title").textContent = hasTrack ? data.title : "Ничего не играет";
+        document.getElementById("artists").textContent = hasTrack ? data.artists : "Включи трек в Spotify";
         document.getElementById("status").textContent = data.status;
-        document.getElementById("mode").textContent = data.has_track
-          ? (data.is_playing ? "playing · vinyl" : "paused · vinyl")
+        document.getElementById("mode").textContent = hasTrack
+          ? (isPlaying ? "playing · vinyl" : "paused · vinyl")
           : "idle";
       } catch (err) {
         document.getElementById("status").textContent = String(err);
       }
     }
-    tick();
-    setInterval(tick, 80);
+
+    function frame(ts) {
+      const dt = Math.min(0.05, (ts - lastTs) / 1000);
+      lastTs = ts;
+      if (hasTrack && isPlaying) {
+        angle = (angle - 360 * (RPM / 60) * dt) % 360;
+        if (angle < 0) angle += 360;
+      }
+      renderVinyl(angle);
+      requestAnimationFrame(frame);
+    }
+
+    syncSpotify();
+    setInterval(syncSpotify, 3000);
+    requestAnimationFrame(frame);
   </script>
 </body>
 </html>
@@ -445,16 +516,16 @@ def make_handler(state: FrameState):
                 self.wfile.write(body)
                 return
 
-            if self.path.startswith("/api/frame"):
+            if self.path.startswith("/api/state") or self.path.startswith("/api/frame"):
                 with state.lock:
                     payload = {
-                        "pixels": state.pixels,
+                        "art": state.art,
+                        "art_version": state.art_version,
                         "is_playing": state.is_playing,
                         "has_track": state.has_track,
                         "title": state.title,
                         "artists": state.artists,
                         "track_id": state.track_id,
-                        "angle": state.angle,
                         "status": state.status,
                         "updated_at": state.updated_at,
                     }
@@ -476,63 +547,50 @@ def make_handler(state: FrameState):
     return Handler
 
 
-def poll_loop(session: SpotifySession, state: FrameState) -> None:
-    art_pixels: list[tuple[int, int, int]] | None = None
+def spotify_poll_loop(session: SpotifySession, state: FrameState) -> None:
     loaded_id: str | None = None
-    rpm = 18.0
-    last_anim = time.monotonic()
-    last_poll = 0.0
 
     while True:
-        now = time.monotonic()
-        dt = now - last_anim
-        last_anim = now
+        try:
+            playback = session.currently_playing()
+            has_track, is_playing, title, artists, track_id, image_url = parse_playback(playback)
 
-        if now - last_poll >= 3.0:
-            last_poll = now
-            try:
-                playback = session.currently_playing()
-                has_track, is_playing, title, artists, track_id, image_url = parse_playback(playback)
-
-                if has_track and image_url and track_id != loaded_id:
-                    print(f"Loading art for: {title} — {artists}")
-                    art = download_image(image_url)
-                    art_pixels = downsample_to_matrix(art)
-                    loaded_id = track_id
-                    with state.lock:
-                        state.angle = 0.0
-
-                if not has_track:
-                    art_pixels = None
-                    loaded_id = None
-
+            if has_track and image_url and track_id != loaded_id:
+                print(f"Loading art for: {title} — {artists}")
+                art = download_image(image_url)
+                art_pixels = [[c[0], c[1], c[2]] for c in downsample_to_matrix(art)]
+                loaded_id = track_id
                 with state.lock:
-                    state.has_track = has_track
-                    state.is_playing = is_playing
-                    state.title = title
-                    state.artists = artists
-                    state.track_id = track_id
-                    state.status = (
-                        "playing"
-                        if has_track and is_playing
-                        else "paused"
-                        if has_track
-                        else "idle · no track"
-                    )
-            except Exception as exc:  # noqa: BLE001
+                    state.art = art_pixels
+                    state.art_version += 1
+
+            if not has_track:
                 with state.lock:
-                    state.status = f"error: {exc}"
-                print("Spotify poll error:", exc)
+                    if state.art is not None or state.has_track:
+                        state.art = None
+                        state.art_version += 1
+                loaded_id = None
 
-        with state.lock:
-            if state.has_track and state.is_playing:
-                state.angle = (state.angle - 360.0 * (rpm / 60.0) * dt) % 360.0
-            angle = state.angle
-            has_track = state.has_track
-            state.pixels = render_vinyl(art_pixels if has_track else None, angle)
-            state.updated_at = time.time()
+            with state.lock:
+                state.has_track = has_track
+                state.is_playing = is_playing
+                state.title = title
+                state.artists = artists
+                state.track_id = track_id
+                state.status = (
+                    "playing"
+                    if has_track and is_playing
+                    else "paused"
+                    if has_track
+                    else "idle · no track"
+                )
+                state.updated_at = time.time()
+        except Exception as exc:  # noqa: BLE001
+            with state.lock:
+                state.status = f"error: {exc}"
+            print("Spotify poll error:", exc)
 
-        time.sleep(1 / 20)
+        time.sleep(3.0)
 
 
 def main() -> None:
@@ -546,24 +604,25 @@ def main() -> None:
     session = SpotifySession(client_id, client_secret)
     state = FrameState(
         lock=threading.Lock(),
-        pixels=blank_pixels(),
+        art=None,
         is_playing=False,
         has_track=False,
         title="",
         artists="",
         track_id=None,
-        angle=0.0,
         status="starting",
         updated_at=time.time(),
+        art_version=0,
     )
 
-    thread = threading.Thread(target=poll_loop, args=(session, state), daemon=True)
+    thread = threading.Thread(target=spotify_poll_loop, args=(session, state), daemon=True)
     thread.start()
 
     server = ThreadingHTTPServer((HOST, PORT), make_handler(state))
     url = f"http://{HOST}:{PORT}"
     print(f"Virtual matrix: {url}")
     print("Play something on Spotify, watch the 16x16 disc update.")
+    print("Restart this script if it was already running, then refresh the browser.")
     webbrowser.open(url)
     try:
         server.serve_forever()
