@@ -174,7 +174,7 @@
       { id: "stars", name: "7. Stars", desc: "Мерцающее небо" },
       { id: "snow", name: "8. Snow", desc: "Снег" },
       { id: "plasma", name: "9. Plasma", desc: "Медленная лава / plasma" },
-      { id: "clock", name: "10. Clock", desc: "Пиксельные часы" },
+      { id: "clock", name: "10. Clock", desc: "Орбитальные часы: цифры + секундная точка по кругу" },
       { id: "rainbow", name: "11. Rainbow swirl", desc: "Радуга, крутится вокруг центра" },
       { id: "matrix", name: "12. Matrix code", desc: "Зелёные каскады" },
       { id: "ripple", name: "13. Ripple", desc: "Круги от центра" },
@@ -336,18 +336,71 @@
       }
       if (mode === "clock") {
         const now = new Date();
-        const hh = now.getHours(), mm = now.getMinutes();
+        const hh = now.getHours();
+        const mm = now.getMinutes();
+        const ss = now.getSeconds() + now.getMilliseconds() / 1000;
         const digits = [Math.floor(hh / 10), hh % 10, Math.floor(mm / 10), mm % 10];
-        const origins = [[2, 2], [7, 2], [2, 9], [7, 9]];
+        const origins = [[3, 3], [8, 3], [3, 9], [8, 9]];
+
+        // Ambient day/night wash behind everything.
+        const dayHue = 210 - Math.sin((hh / 24) * Math.PI * 2) * 40;
+        const ambient = 0.04 + 0.03 * Math.sin(t * 0.8);
+        let out = hsv(dayHue, 0.45, ambient + (1 - dist / 10) * 0.08);
+
+        // Soft watch face disc.
+        if (dist <= 7.4) {
+          const face = 0.06 + 0.05 * (1 - dist / 7.4);
+          out = [
+            clamp((out[0] + face * 40) | 0, 0, 255),
+            clamp((out[1] + face * 50) | 0, 0, 255),
+            clamp((out[2] + face * 70) | 0, 0, 255),
+          ];
+        }
+
+        // Breathing rim.
+        const rimPulse = 0.35 + 0.25 * Math.sin(t * 1.5);
+        if (dist > 6.9 && dist < 7.7) {
+          out = hsv(dayHue + 20, 0.25, 0.2 + rimPulse * 0.45);
+        }
+
+        // Cardinal ticks (12 / 3 / 6 / 9).
+        const ang = Math.atan2(dy, dx);
+        const nearCardinal =
+          Math.abs(Math.cos(ang * 2)) > 0.97 && dist > 6.5 && dist < 7.8;
+        if (nearCardinal) out = [200, 210, 230];
+
+        // Seconds pearl orbiting the rim (smooth).
+        const secAng = -Math.PI / 2 + (ss / 60) * Math.PI * 2;
+        const sx = cx + Math.cos(secAng) * 7.15;
+        const sy = cy + Math.sin(secAng) * 7.15;
+        if (Math.hypot(x - sx, y - sy) < 0.85) {
+          out = [255, 240, 210];
+        }
+
+        // Short minute "hand" hint (dim radial line).
+        const minAng = -Math.PI / 2 + ((mm + ss / 60) / 60) * Math.PI * 2;
+        const along = dx * Math.cos(minAng) + dy * Math.sin(minAng);
+        const perp = Math.abs(-dx * Math.sin(minAng) + dy * Math.cos(minAng));
+        if (along > 0.8 && along < 5.2 && perp < 0.55) {
+          out = [140, 160, 200];
+        }
+
+        // Digits on top of face.
         for (let i = 0; i < 4; i++) {
           const [ox, oy] = origins[i];
           const col = x - ox, row = y - oy;
           if (col >= 0 && col < 3 && row >= 0 && row < 5 && digitMask(digits[i], row, col)) {
-            return [180, 190, 210];
+            const glow = 0.75 + 0.25 * Math.sin(t * 2 + i);
+            out = [(210 * glow) | 0, (225 * glow) | 0, (245 * glow) | 0];
           }
         }
-        if (dist > 6.2 && dist < 7.2) return [28, 28, 32];
-        return [0, 0, 0];
+
+        // Blinking center separator between HH and MM.
+        if ((x === 7 || x === 8) && (y === 7 || y === 8) && Math.floor(ss) % 2 === 0) {
+          out = [230, 235, 255];
+        }
+
+        return out;
       }
       if (mode === "rainbow") {
         const a = Math.atan2(dy, dx) + t;
