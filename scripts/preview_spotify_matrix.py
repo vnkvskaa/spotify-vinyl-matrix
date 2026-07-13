@@ -334,17 +334,17 @@ PAGE_HTML = """<!doctype html>
     .matrix {
       width: min(360px, 80vw);
       aspect-ratio: 1;
-      padding: 10px;
+      padding: 12px;
       background: #09090b;
       border-radius: 12px;
-      image-rendering: pixelated;
     }
     .matrix canvas {
       width: 100%;
-      height: 100%;
+      height: auto;
+      aspect-ratio: 1 / 1;
       display: block;
+      background: #050506;
       border-radius: 4px;
-      image-rendering: pixelated;
     }
     .meta h1 {
       margin: 0 0 8px;
@@ -384,7 +384,7 @@ PAGE_HTML = """<!doctype html>
 <body>
   <div class="wrap">
     <div class="stage">
-      <div class="matrix"><canvas id="matrix" width="16" height="16"></canvas></div>
+      <div class="matrix"><canvas id="matrix" width="320" height="320"></canvas></div>
       <div class="badge" id="mode">connecting</div>
     </div>
     <div class="meta">
@@ -400,10 +400,11 @@ PAGE_HTML = """<!doctype html>
   <script>
     const MATRIX = 16;
     const RPM = 18;
+    const CELL = 18;
+    const GAP = 2;
     const canvas = document.getElementById("matrix");
-    const ctx = canvas.getContext("2d", { alpha: false });
-    const imageData = ctx.createImageData(MATRIX, MATRIX);
-    const buf = imageData.data;
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
 
     let art = null;
     let artVersion = -1;
@@ -428,7 +429,7 @@ PAGE_HTML = """<!doctype html>
       return deg;
     }
 
-    function renderVinyl(angleDeg) {
+    function pixelColor(x, y, angleDeg) {
       const cx = (MATRIX - 1) * 0.5;
       const cy = (MATRIX - 1) * 0.5;
       const radius = MATRIX * 0.5 - 0.6;
@@ -437,50 +438,55 @@ PAGE_HTML = """<!doctype html>
       const rad = angleDeg * Math.PI / 180;
       const cosA = Math.cos(rad);
       const sinA = Math.sin(rad);
-      const markerLocalX = radius * 0.82;
+      const dx = x - cx;
+      const dy = y - cy;
+      const dist = Math.hypot(dx, dy);
+      let r = 0, g = 0, b = 0;
 
+      if (!hasTrack || !art) {
+        if (dist > radius - 0.55 && dist < radius + 0.35) {
+          r = g = 28; b = 32;
+        }
+        return [r, g, b];
+      }
+      if (dist > radius) return [0, 0, 0];
+
+      const sx = cosA * dx + sinA * dy + cx;
+      const sy = -sinA * dx + cosA * dy + cy;
+      [r, g, b] = sampleArt(sx, sy);
+      if (dist <= holeR) {
+        r = g = b = 0;
+      } else if (dist <= labelR) {
+        r = (r * 0.18) | 0; g = (g * 0.18) | 0; b = (b * 0.18) | 0;
+      }
+      if (dist > radius - 0.85) {
+        r = (r * 0.55) | 0; g = (g * 0.55) | 0; b = (b * 0.55) | 0;
+      }
+      const markerLocalX = radius * 0.82;
+      const mx = cosA * markerLocalX;
+      const my = sinA * markerLocalX;
+      if (Math.abs(dx - mx) < 0.75 && Math.abs(dy - my) < 0.75 && dist > labelR) {
+        r = 255; g = 240; b = 220;
+      }
+      return [r, g, b];
+    }
+
+    function renderVinyl(angleDeg) {
+      ctx.fillStyle = "#050506";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       for (let y = 0; y < MATRIX; y++) {
         for (let x = 0; x < MATRIX; x++) {
-          const dx = x - cx;
-          const dy = y - cy;
-          const dist = Math.hypot(dx, dy);
-          let r = 0, g = 0, b = 0;
-
-          if (!hasTrack || !art) {
-            if (dist > radius - 0.55 && dist < radius + 0.35) {
-              r = g = 28; b = 32;
-            }
-          } else if (dist <= radius) {
-            const sx = cosA * dx + sinA * dy + cx;
-            const sy = -sinA * dx + cosA * dy + cy;
-            [r, g, b] = sampleArt(sx, sy);
-            if (dist <= holeR) {
-              r = g = b = 0;
-            } else if (dist <= labelR) {
-              r = (r * 0.18) | 0; g = (g * 0.18) | 0; b = (b * 0.18) | 0;
-            }
-            if (dist > radius - 0.85) {
-              r = (r * 0.55) | 0; g = (g * 0.55) | 0; b = (b * 0.55) | 0;
-            }
-            const mx = cosA * markerLocalX;
-            const my = sinA * markerLocalX;
-            if (Math.abs(dx - mx) < 0.75 && Math.abs(dy - my) < 0.75 && dist > labelR) {
-              r = 255; g = 240; b = 220;
-            }
-          }
-
-          const i = (y * MATRIX + x) * 4;
-          buf[i] = r; buf[i + 1] = g; buf[i + 2] = b; buf[i + 3] = 255;
+          const [r, g, b] = pixelColor(x, y, angleDeg);
+          ctx.fillStyle = `rgb(${r},${g},${b})`;
+          ctx.fillRect(x * (CELL + GAP), y * (CELL + GAP), CELL, CELL);
         }
       }
-      ctx.putImageData(imageData, 0, 0);
     }
 
     async function syncSpotify() {
       if (syncInFlight) return;
       syncInFlight = true;
       try {
-        // Tiny meta payload every few seconds — art is fetched only when version changes.
         const metaRes = await fetch("/api/meta");
         const meta = await metaRes.json();
 
@@ -493,23 +499,23 @@ PAGE_HTML = """<!doctype html>
 
         hasTrack = !!meta.has_track;
 
-        if (meta.art_version !== artVersion) {
-          if (meta.has_track) {
-            const artRes = await fetch("/api/art");
-            const artPayload = await artRes.json();
-            if (artPayload.art_version === meta.art_version) {
-              art = artPayload.art;
-              artVersion = artPayload.art_version;
-              if (meta.track_id !== trackId) {
-                trackId = meta.track_id;
-                angle = 0;
-              }
+        const needArt = hasTrack && (meta.art_version !== artVersion || !art);
+        if (needArt) {
+          const artRes = await fetch("/api/art");
+          const artPayload = await artRes.json();
+          if (artPayload.art) {
+            art = artPayload.art;
+            artVersion = artPayload.art_version;
+            if (meta.track_id !== trackId) {
+              trackId = meta.track_id;
+              angle = 0;
             }
-          } else {
-            art = null;
-            artVersion = meta.art_version;
-            trackId = null;
           }
+          // If art is not ready yet, keep artVersion behind so we retry next sync.
+        } else if (!hasTrack && art !== null) {
+          art = null;
+          artVersion = meta.art_version;
+          trackId = null;
         }
 
         document.getElementById("title").textContent = hasTrack ? meta.title : "Ничего не играет";
@@ -535,6 +541,8 @@ PAGE_HTML = """<!doctype html>
       requestAnimationFrame(frame);
     }
 
+    // Draw something immediately so the page never looks blank.
+    renderVinyl(0);
     syncSpotify();
     setInterval(syncSpotify, 4000);
     requestAnimationFrame(frame);
