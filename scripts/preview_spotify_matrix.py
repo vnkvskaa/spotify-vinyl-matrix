@@ -462,12 +462,6 @@ PAGE_HTML = """<!doctype html>
       if (dist > radius - 0.85) {
         r = (r * 0.55) | 0; g = (g * 0.55) | 0; b = (b * 0.55) | 0;
       }
-      const markerLocalX = radius * 0.82;
-      const mx = cosA * markerLocalX;
-      const my = sinA * markerLocalX;
-      if (Math.abs(dx - mx) < 0.75 && Math.abs(dy - my) < 0.75 && dist > labelR) {
-        r = 255; g = 240; b = 220;
-      }
       return [r, g, b];
     }
 
