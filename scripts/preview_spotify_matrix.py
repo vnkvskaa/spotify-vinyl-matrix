@@ -411,8 +411,10 @@ PAGE_HTML = """<!doctype html>
 
     let art = null;
     let artVersion = -1;
+    let trackId = null;
     let hasTrack = false;
     let isPlaying = false;
+    let pausedStreak = 0;
     let angle = 0;
     let lastTs = performance.now();
 
@@ -421,6 +423,12 @@ PAGE_HTML = """<!doctype html>
       const y = Math.floor(fy);
       if (x < 0 || y < 0 || x >= MATRIX || y >= MATRIX || !art) return [0, 0, 0];
       return art[y * MATRIX + x];
+    }
+
+    function wrapAngle(deg) {
+      deg = deg % 360;
+      if (deg < 0) deg += 360;
+      return deg;
     }
 
     function renderVinyl(angleDeg) {
@@ -432,6 +440,10 @@ PAGE_HTML = """<!doctype html>
       const rad = angleDeg * Math.PI / 180;
       const cosA = Math.cos(rad);
       const sinA = Math.sin(rad);
+
+      // Fixed marker angle in "vinyl space" so a full rotation is obvious on 16x16.
+      const markerLocalX = radius * 0.82;
+      const markerLocalY = 0;
 
       for (let y = 0; y < MATRIX; y++) {
         for (let x = 0; x < MATRIX; x++) {
@@ -445,6 +457,7 @@ PAGE_HTML = """<!doctype html>
               r = g = 28; b = 32;
             }
           } else if (dist <= radius) {
+            // Rotate album art with the disc.
             const sx = cosA * dx + sinA * dy + cx;
             const sy = -sinA * dx + cosA * dy + cy;
             [r, g, b] = sampleArt(sx, sy);
@@ -455,6 +468,13 @@ PAGE_HTML = """<!doctype html>
             }
             if (dist > radius - 0.85) {
               r = (r * 0.55) | 0; g = (g * 0.55) | 0; b = (b * 0.55) | 0;
+            }
+
+            // Bright rim tick that travels a true full circle.
+            const mx = cosA * markerLocalX - sinA * markerLocalY;
+            const my = sinA * markerLocalX + cosA * markerLocalY;
+            if (Math.abs(dx - mx) < 0.75 && Math.abs(dy - my) < 0.75 && dist > labelR) {
+              r = 255; g = 240; b = 220;
             }
           }
           leds[y * MATRIX + x].style.background = `rgb(${r},${g},${b})`;
@@ -467,12 +487,26 @@ PAGE_HTML = """<!doctype html>
         const res = await fetch("/api/state");
         const data = await res.json();
         hasTrack = !!data.has_track;
-        isPlaying = !!data.is_playing;
+
+        if (data.is_playing) {
+          pausedStreak = 0;
+          isPlaying = true;
+        } else {
+          pausedStreak += 1;
+          // Ignore brief Spotify "paused" glitches so spin doesn't restart mid-circle.
+          if (pausedStreak >= 2) isPlaying = false;
+        }
+
         if (data.art_version !== artVersion) {
           artVersion = data.art_version;
           art = data.art;
-          angle = 0;
+          // Reset angle only when the track actually changes.
+          if (data.track_id !== trackId) {
+            trackId = data.track_id;
+            angle = 0;
+          }
         }
+
         document.getElementById("title").textContent = hasTrack ? data.title : "Ничего не играет";
         document.getElementById("artists").textContent = hasTrack ? data.artists : "Включи трек в Spotify";
         document.getElementById("status").textContent = data.status;
@@ -485,11 +519,10 @@ PAGE_HTML = """<!doctype html>
     }
 
     function frame(ts) {
-      const dt = Math.min(0.05, (ts - lastTs) / 1000);
+      const dt = Math.min(0.05, Math.max(0, (ts - lastTs) / 1000));
       lastTs = ts;
       if (hasTrack && isPlaying) {
-        angle = (angle - 360 * (RPM / 60) * dt) % 360;
-        if (angle < 0) angle += 360;
+        angle = wrapAngle(angle - 360 * (RPM / 60) * dt);
       }
       renderVinyl(angle);
       requestAnimationFrame(frame);
