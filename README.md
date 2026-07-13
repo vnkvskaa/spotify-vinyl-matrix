@@ -59,7 +59,7 @@ python3 scripts/get_spotify_token.py
 
 ## Виртуальная матрица (пока нет железа)
 
-Можно уже сейчас смотреть, как **реальные обложки Spotify** выглядят на 16×16:
+Можно уже сейчас смотреть, как **реальные обложки Spotify** выглядят на 16×16, и листать **20 анимаций**:
 
 1. Создай приложение на [Spotify Developer Dashboard](https://developer.spotify.com/dashboard/)
 2. Redirect URI: `http://127.0.0.1:8888/callback`
@@ -77,7 +77,8 @@ python3 scripts/get_spotify_token.py
 python3 scripts/preview_spotify_matrix.py
 ```
 
-Откроется `http://127.0.0.1:8765`: живой опрос Spotify → обложка → диск 16×16 с вращением.
+Откроется `http://127.0.0.1:8765`: справа переключатель анимаций, стрелки ← → на клавиатуре тоже работают.  
+Режимы vinyl / progress / pulse используют живую обложку Spotify.
 
 ## Прошивка
 

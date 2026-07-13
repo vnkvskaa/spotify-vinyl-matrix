@@ -107,6 +107,7 @@ class FrameState:
     status: str
     updated_at: float
     art_version: int
+    progress: float
 
 
 def blank_pixels() -> list[list[int]]:
@@ -263,12 +264,12 @@ def render_vinyl(
     return out
 
 
-def parse_playback(playback: dict[str, Any] | None) -> tuple[bool, bool, str, str, str | None, str | None]:
+def parse_playback(playback: dict[str, Any] | None) -> tuple[bool, bool, str, str, str | None, str | None, float]:
     if not playback:
-        return False, False, "", "", None, None
+        return False, False, "", "", None, None, 0.0
     item = playback.get("item") or {}
     if not item:
-        return False, False, "", "", None, None
+        return False, False, "", "", None, None, 0.0
 
     is_playing = bool(playback.get("is_playing"))
     track_id = item.get("id")
@@ -283,274 +284,30 @@ def parse_playback(playback: dict[str, Any] | None) -> tuple[bool, bool, str, st
     image_url = None
     if images:
         image_url = min(images, key=lambda img: img.get("width") or 10_000).get("url")
-    return True, is_playing, title, artists, track_id, image_url
+
+    progress = 0.0
+    duration = int(item.get("duration_ms") or 0)
+    progress_ms = int(playback.get("progress_ms") or 0)
+    if duration > 0:
+        progress = max(0.0, min(1.0, progress_ms / duration))
+
+    return True, is_playing, title, artists, track_id, image_url, progress
 
 
-PAGE_HTML = """<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Spotify 16×16 preview</title>
-  <style>
-    :root {
-      --bg: #111114;
-      --panel: #1a1a1f;
-      --text: #ececf1;
-      --muted: #9a9aa6;
-      --line: #2c2c34;
-      --led: #050506;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      display: grid;
-      place-items: center;
-      padding: 24px;
-    }
-    .wrap {
-      width: min(920px, 100%);
-      display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
-      gap: 28px;
-      align-items: center;
-    }
-    @media (max-width: 800px) {
-      .wrap { grid-template-columns: 1fr; }
-    }
-    .stage {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 28px;
-      display: grid;
-      place-items: center;
-      gap: 14px;
-    }
-    .matrix {
-      width: min(360px, 80vw);
-      aspect-ratio: 1;
-      padding: 12px;
-      background: #09090b;
-      border-radius: 12px;
-    }
-    .matrix canvas {
-      width: 100%;
-      height: auto;
-      aspect-ratio: 1 / 1;
-      display: block;
-      background: #050506;
-      border-radius: 4px;
-    }
-    .meta h1 {
-      margin: 0 0 8px;
-      font-size: 28px;
-      letter-spacing: -0.03em;
-      font-weight: 600;
-    }
-    .meta p { margin: 0 0 10px; color: var(--muted); line-height: 1.45; }
-    .track {
-      margin-top: 18px;
-      padding: 16px;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: var(--panel);
-    }
-    .track .title { font-size: 18px; margin-bottom: 4px; }
-    .track .artists { color: var(--muted); font-size: 14px; }
-    .badge {
-      display: inline-block;
-      margin-top: 12px;
-      padding: 4px 8px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      font-size: 12px;
-      color: var(--muted);
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-    }
-    .hint { font-size: 13px; color: var(--muted); margin-top: 16px; }
-    code {
-      font-family: "IBM Plex Mono", ui-monospace, monospace;
-      font-size: 12px;
-      color: #d7d7e0;
-    }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="stage">
-      <div class="matrix"><canvas id="matrix" width="320" height="320"></canvas></div>
-      <div class="badge" id="mode">connecting</div>
-    </div>
-    <div class="meta">
-      <h1>Virtual 16×16</h1>
-      <p>Живой превью с реального Spotify: обложка жмётся в 16×16 и крутится как пластинка — так же, как будет на матрице.</p>
-      <div class="track">
-        <div class="title" id="title">Ждём трек…</div>
-        <div class="artists" id="artists">Включи что-нибудь в Spotify</div>
-      </div>
-      <p class="hint">Статус: <code id="status">boot</code></p>
-    </div>
-  </div>
-  <script>
-    const MATRIX = 16;
-    const RPM = 18;
-    const CELL = 18;
-    const GAP = 2;
-    const canvas = document.getElementById("matrix");
-    const ctx = canvas.getContext("2d");
-    ctx.imageSmoothingEnabled = false;
+PREVIEW_HTML = ROOT / "preview" / "index.html"
 
-    let art = null;
-    let artVersion = -1;
-    let trackId = null;
-    let hasTrack = false;
-    let isPlaying = false;
-    let pausedStreak = 0;
-    let angle = 0;
-    let lastTs = performance.now();
-    let syncInFlight = false;
 
-    function sampleArt(fx, fy) {
-      const x = Math.floor(fx);
-      const y = Math.floor(fy);
-      if (x < 0 || y < 0 || x >= MATRIX || y >= MATRIX || !art) return [0, 0, 0];
-      return art[y * MATRIX + x];
-    }
-
-    function wrapAngle(deg) {
-      deg %= 360;
-      if (deg < 0) deg += 360;
-      return deg;
-    }
-
-    function pixelColor(x, y, angleDeg) {
-      const cx = (MATRIX - 1) * 0.5;
-      const cy = (MATRIX - 1) * 0.5;
-      const radius = MATRIX * 0.5 - 0.6;
-      const labelR = radius * 0.22;
-      const holeR = radius * 0.08;
-      const rad = angleDeg * Math.PI / 180;
-      const cosA = Math.cos(rad);
-      const sinA = Math.sin(rad);
-      const dx = x - cx;
-      const dy = y - cy;
-      const dist = Math.hypot(dx, dy);
-      let r = 0, g = 0, b = 0;
-
-      if (!hasTrack || !art) {
-        if (dist > radius - 0.55 && dist < radius + 0.35) {
-          r = g = 28; b = 32;
-        }
-        return [r, g, b];
-      }
-      if (dist > radius) return [0, 0, 0];
-
-      const sx = cosA * dx + sinA * dy + cx;
-      const sy = -sinA * dx + cosA * dy + cy;
-      [r, g, b] = sampleArt(sx, sy);
-      if (dist <= holeR) {
-        r = g = b = 0;
-      } else if (dist <= labelR) {
-        r = (r * 0.18) | 0; g = (g * 0.18) | 0; b = (b * 0.18) | 0;
-      }
-      if (dist > radius - 0.85) {
-        r = (r * 0.55) | 0; g = (g * 0.55) | 0; b = (b * 0.55) | 0;
-      }
-      return [r, g, b];
-    }
-
-    function renderVinyl(angleDeg) {
-      ctx.fillStyle = "#050506";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      for (let y = 0; y < MATRIX; y++) {
-        for (let x = 0; x < MATRIX; x++) {
-          const [r, g, b] = pixelColor(x, y, angleDeg);
-          ctx.fillStyle = `rgb(${r},${g},${b})`;
-          ctx.fillRect(x * (CELL + GAP), y * (CELL + GAP), CELL, CELL);
-        }
-      }
-    }
-
-    async function syncSpotify() {
-      if (syncInFlight) return;
-      syncInFlight = true;
-      try {
-        const metaRes = await fetch("/api/meta");
-        const meta = await metaRes.json();
-
-        if (meta.is_playing) {
-          pausedStreak = 0;
-          isPlaying = true;
-        } else if (++pausedStreak >= 2) {
-          isPlaying = false;
-        }
-
-        hasTrack = !!meta.has_track;
-
-        const needArt = hasTrack && (meta.art_version !== artVersion || !art);
-        if (needArt) {
-          const artRes = await fetch("/api/art");
-          const artPayload = await artRes.json();
-          if (artPayload.art) {
-            art = artPayload.art;
-            artVersion = artPayload.art_version;
-            if (meta.track_id !== trackId) {
-              trackId = meta.track_id;
-              angle = 0;
-            }
-          }
-          // If art is not ready yet, keep artVersion behind so we retry next sync.
-        } else if (!hasTrack && art !== null) {
-          art = null;
-          artVersion = meta.art_version;
-          trackId = null;
-        }
-
-        document.getElementById("title").textContent = hasTrack ? meta.title : "Ничего не играет";
-        document.getElementById("artists").textContent = hasTrack ? meta.artists : "Включи трек в Spotify";
-        document.getElementById("status").textContent = meta.status;
-        document.getElementById("mode").textContent = hasTrack
-          ? (isPlaying ? "playing · vinyl" : "paused · vinyl")
-          : "idle";
-      } catch (err) {
-        document.getElementById("status").textContent = String(err);
-      } finally {
-        syncInFlight = false;
-      }
-    }
-
-    function frame(ts) {
-      const dt = Math.min(0.05, Math.max(0, (ts - lastTs) / 1000));
-      lastTs = ts;
-      if (hasTrack && isPlaying) {
-        angle = wrapAngle(angle - 360 * (RPM / 60) * dt);
-      }
-      renderVinyl(angle);
-      requestAnimationFrame(frame);
-    }
-
-    // Draw something immediately so the page never looks blank.
-    renderVinyl(0);
-    syncSpotify();
-    setInterval(syncSpotify, 4000);
-    requestAnimationFrame(frame);
-  </script>
-</body>
-</html>
-"""
+def load_preview_html() -> bytes:
+    if not PREVIEW_HTML.exists():
+        raise FileNotFoundError(f"Missing preview page: {PREVIEW_HTML}")
+    return PREVIEW_HTML.read_bytes()
 
 
 def make_handler(state: FrameState):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             if self.path == "/" or self.path.startswith("/index"):
-                body = PAGE_HTML.encode("utf-8")
+                body = load_preview_html()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -569,6 +326,7 @@ def make_handler(state: FrameState):
                         "track_id": state.track_id,
                         "status": state.status,
                         "updated_at": state.updated_at,
+                        "progress": state.progress,
                     }
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(200)
@@ -631,7 +389,7 @@ def spotify_poll_loop(session: SpotifySession, state: FrameState) -> None:
     while True:
         try:
             playback = session.currently_playing()
-            has_track, is_playing, title, artists, track_id, image_url = parse_playback(playback)
+            has_track, is_playing, title, artists, track_id, image_url, progress = parse_playback(playback)
 
             if has_track and image_url and track_id != loaded_id:
                 print(f"Loading art for: {title} — {artists}")
@@ -655,6 +413,7 @@ def spotify_poll_loop(session: SpotifySession, state: FrameState) -> None:
                 state.title = title
                 state.artists = artists
                 state.track_id = track_id
+                state.progress = progress
                 state.status = (
                     "playing"
                     if has_track and is_playing
@@ -691,6 +450,7 @@ def main() -> None:
         status="starting",
         updated_at=time.time(),
         art_version=0,
+        progress=0.0,
     )
 
     thread = threading.Thread(target=spotify_poll_loop, args=(session, state), daemon=True)

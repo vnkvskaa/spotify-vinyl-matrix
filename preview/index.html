@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Spotify 16×16 · animations</title>
+  <style>
+    :root {
+      --bg: #111114;
+      --panel: #1a1a1f;
+      --text: #ececf1;
+      --muted: #9a9aa6;
+      --line: #2c2c34;
+      --accent: #d8d8e2;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+    }
+    .wrap {
+      width: min(980px, 100%);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 28px;
+      align-items: start;
+    }
+    @media (max-width: 860px) {
+      .wrap { grid-template-columns: 1fr; }
+    }
+    .stage {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 24px;
+      display: grid;
+      place-items: center;
+      gap: 12px;
+      position: sticky;
+      top: 24px;
+    }
+    .matrix {
+      width: min(360px, 80vw);
+      aspect-ratio: 1;
+      padding: 12px;
+      background: #09090b;
+      border-radius: 12px;
+    }
+    .matrix canvas {
+      width: 100%;
+      height: auto;
+      aspect-ratio: 1 / 1;
+      display: block;
+      background: #050506;
+      border-radius: 4px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      letter-spacing: -0.03em;
+      font-weight: 600;
+    }
+    .lead { margin: 0 0 16px; color: var(--muted); line-height: 1.45; }
+    .track {
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      margin-bottom: 16px;
+    }
+    .track .title { font-size: 17px; margin-bottom: 4px; }
+    .track .artists { color: var(--muted); font-size: 14px; }
+    .switcher {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+      max-height: 58vh;
+      overflow: auto;
+    }
+    .switcher button {
+      text-align: left;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      font: inherit;
+    }
+    .switcher button:hover { background: #222228; }
+    .switcher button.active {
+      border-color: var(--line);
+      background: #24242b;
+    }
+    .switcher button span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+    .nav {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .nav button {
+      flex: 1;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      font: inherit;
+    }
+    .hint { margin-top: 12px; font-size: 13px; color: var(--muted); }
+    code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; color: #d7d7e0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="stage">
+      <div class="matrix"><canvas id="matrix" width="320" height="320"></canvas></div>
+      <div class="badge" id="badge">animation 1 / 20</div>
+    </div>
+    <div class="meta">
+      <h1>20 анимаций</h1>
+      <p class="lead">Листай режимы и смотри, как они выглядят на виртуальной 16×16. Винил и progress берут обложку из живого Spotify.</p>
+      <div class="track">
+        <div class="title" id="title">Ждём трек…</div>
+        <div class="artists" id="artists">Включи Spotify для vinyl-режимов</div>
+      </div>
+      <div class="nav">
+        <button id="prev" type="button">← prev</button>
+        <button id="next" type="button">next →</button>
+      </div>
+      <div class="switcher" id="switcher"></div>
+      <p class="hint">Spotify: <code id="status">boot</code></p>
+    </div>
+  </div>
+  <script>
+    const MATRIX = 16;
+    const CELL = 18;
+    const GAP = 2;
+    const canvas = document.getElementById("matrix");
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+
+    const MODES = [
+      { id: "vinyl", name: "1. Vinyl", desc: "Обложка Spotify крутится как пластинка" },
+      { id: "progress", name: "2. Progress ring", desc: "Винил + дуга прогресса трека" },
+      { id: "pulse", name: "3. Pulse", desc: "Диск дышит яркостью" },
+      { id: "eq", name: "4. Equalizer", desc: "Столбики ритма" },
+      { id: "rain", name: "5. Rain", desc: "Мелкий цифровой дождь" },
+      { id: "fire", name: "6. Fire", desc: "Угли и пламя снизу вверх" },
+      { id: "stars", name: "7. Stars", desc: "Мерцающее небо" },
+      { id: "snow", name: "8. Snow", desc: "Снег" },
+      { id: "plasma", name: "9. Plasma", desc: "Медленная лава / plasma" },
+      { id: "clock", name: "10. Clock", desc: "Пиксельные часы" },
+      { id: "rainbow", name: "11. Rainbow swirl", desc: "Радуга, крутится вокруг центра" },
+      { id: "matrix", name: "12. Matrix code", desc: "Зелёные каскады" },
+      { id: "ripple", name: "13. Ripple", desc: "Круги от центра" },
+      { id: "spinner", name: "14. Spinner", desc: "Загрузчик / спиннер" },
+      { id: "heartbeat", name: "15. Heartbeat", desc: "Пульс сердца" },
+      { id: "ocean", name: "16. Ocean", desc: "Волны" },
+      { id: "confetti", name: "17. Confetti", desc: "Конфетти" },
+      { id: "life", name: "18. Game of Life", desc: "Клеточный автомат" },
+      { id: "spiral", name: "19. Spiral", desc: "Спираль" },
+      { id: "tunnel", name: "20. Tunnel", desc: "Туннель вглубь" },
+    ];
+
+    let modeIndex = 0;
+    let art = null;
+    let artVersion = -1;
+    let trackId = null;
+    let hasTrack = false;
+    let isPlaying = false;
+    let progress = 0.35;
+    let pausedStreak = 0;
+    let angle = 0;
+    let t = 0;
+    let lastTs = performance.now();
+    let syncInFlight = false;
+
+    // Animation state bags
+    const drops = Array.from({ length: 16 }, () => ({ x: Math.random() * 16, y: Math.random() * 16, v: 0.2 + Math.random() * 0.4 }));
+    const flakes = Array.from({ length: 20 }, () => ({ x: Math.random() * 16, y: Math.random() * 16, v: 0.05 + Math.random() * 0.15 }));
+    const sparks = Array.from({ length: 24 }, () => ({ x: Math.random() * 16, y: 16, v: 0.1 + Math.random() * 0.25, life: Math.random() }));
+    const eq = Array.from({ length: 16 }, () => 0);
+    let life = Array.from({ length: 256 }, () => Math.random() > 0.72 ? 1 : 0);
+    let lifeTick = 0;
+    const confetti = Array.from({ length: 28 }, () => ({
+      x: Math.random() * 16, y: Math.random() * 16,
+      vx: -0.05 + Math.random() * 0.1, vy: 0.05 + Math.random() * 0.15,
+      c: [Math.random() * 255, Math.random() * 255, Math.random() * 255]
+    }));
+
+    function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+    function wrapAngle(deg) { deg %= 360; if (deg < 0) deg += 360; return deg; }
+    function hsv(h, s, v) {
+      h = ((h % 360) + 360) % 360;
+      const c = v * s;
+      const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+      const m = v - c;
+      let r = 0, g = 0, b = 0;
+      if (h < 60) [r, g, b] = [c, x, 0];
+      else if (h < 120) [r, g, b] = [x, c, 0];
+      else if (h < 180) [r, g, b] = [0, c, x];
+      else if (h < 240) [r, g, b] = [0, x, c];
+      else if (h < 300) [r, g, b] = [x, 0, c];
+      else [r, g, b] = [c, 0, x];
+      return [(r + m) * 255 | 0, (g + m) * 255 | 0, (b + m) * 255 | 0];
+    }
+    function sampleArt(fx, fy) {
+      const x = Math.floor(fx), y = Math.floor(fy);
+      if (!art || x < 0 || y < 0 || x >= MATRIX || y >= MATRIX) return [0, 0, 0];
+      return art[y * MATRIX + x];
+    }
+    function noise(x, y, time) {
+      return Math.sin(x * 0.7 + time) * Math.cos(y * 0.9 - time * 0.7) + Math.sin((x + y) * 0.35 + time * 1.3);
+    }
+
+    function vinylColor(x, y, angleDeg, brightness = 1, progressAmt = -1) {
+      const cx = (MATRIX - 1) * 0.5, cy = (MATRIX - 1) * 0.5;
+      const radius = MATRIX * 0.5 - 0.6;
+      const labelR = radius * 0.22, holeR = radius * 0.08;
+      const rad = angleDeg * Math.PI / 180;
+      const cosA = Math.cos(rad), sinA = Math.sin(rad);
+      const dx = x - cx, dy = y - cy;
+      const dist = Math.hypot(dx, dy);
+      let r = 0, g = 0, b = 0;
+      if (!art) {
+        if (dist > radius - 0.55 && dist < radius + 0.35) return [28, 28, 32];
+        return [0, 0, 0];
+      }
+      if (dist > radius) return [0, 0, 0];
+      const sx = cosA * dx + sinA * dy + cx;
+      const sy = -sinA * dx + cosA * dy + cy;
+      [r, g, b] = sampleArt(sx, sy);
+      if (dist <= holeR) return [0, 0, 0];
+      if (dist <= labelR) { r = (r * 0.18) | 0; g = (g * 0.18) | 0; b = (b * 0.18) | 0; }
+      if (dist > radius - 0.85) { r = (r * 0.55) | 0; g = (g * 0.55) | 0; b = (b * 0.55) | 0; }
+      if (progressAmt >= 0) {
+        let a = Math.atan2(dy, dx); // -PI..PI
+        a = (a + Math.PI * 1.5) % (Math.PI * 2);
+        if (a < 0) a += Math.PI * 2;
+        const p = a / (Math.PI * 2);
+        if (dist > radius - 1.2 && dist <= radius && p <= progressAmt) {
+          return [230, 230, 235];
+        }
+      }
+      return [(r * brightness) | 0, (g * brightness) | 0, (b * brightness) | 0];
+    }
+
+    function digitMask(d, row, col) {
+      const DIG = [
+        [7,5,5,5,7],[2,6,2,2,7],[7,1,7,4,7],[7,1,7,1,7],[5,5,7,1,1],
+        [7,4,7,1,7],[7,4,7,5,7],[7,1,1,1,1],[7,5,7,5,7],[7,5,7,1,7]
+      ];
+      return !!(DIG[d][row] & (4 >> col));
+    }
+
+    function colorAt(x, y) {
+      const mode = MODES[modeIndex].id;
+      const cx = 7.5, cy = 7.5;
+      const dx = x - cx, dy = y - cy;
+      const dist = Math.hypot(dx, dy);
+
+      if (mode === "vinyl") return vinylColor(x, y, angle, 1, -1);
+      if (mode === "progress") return vinylColor(x, y, angle, 1, progress);
+      if (mode === "pulse") {
+        const bright = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(t * 3));
+        return vinylColor(x, y, angle, bright, -1);
+      }
+      if (mode === "eq") {
+        const h = eq[x];
+        if (MATRIX - 1 - y < h) {
+          const k = (MATRIX - 1 - y) / Math.max(1, h);
+          return hsv(120 - k * 80, 0.85, 0.25 + k * 0.75);
+        }
+        return [0, 0, 0];
+      }
+      if (mode === "rain") {
+        for (const d of drops) {
+          if (Math.floor(d.x) === x && Math.abs(d.y - y) < 1.2) {
+            const fade = 1 - Math.abs(d.y - y);
+            const v = (40 + fade * 180) | 0;
+            return [30, 60, v];
+          }
+        }
+        return [0, 0, 8];
+      }
+      if (mode === "fire") {
+        const heat = Math.max(0, 1 - (MATRIX - 1 - y) / 10) * (0.6 + 0.4 * Math.sin(x * 1.7 + t * 6 + y));
+        const n = 0.5 + 0.5 * noise(x, y, t * 3);
+        const v = clamp(heat * n, 0, 1);
+        return [ (v * 255) | 0, (v * v * 120) | 0, (v * v * v * 40) | 0 ];
+      }
+      if (mode === "stars") {
+        const seed = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+        const tw = seed - Math.floor(seed);
+        if (tw > 0.92) {
+          const blink = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(t * 5 + tw * 20));
+          const v = (blink * 220) | 0;
+          return [v, v, (v * 1.05) | 0];
+        }
+        return [0, 0, 10];
+      }
+      if (mode === "snow") {
+        for (const f of flakes) {
+          if (Math.floor(f.x) === x && Math.floor(f.y) === y) return [230, 235, 245];
+        }
+        return [8, 10, 18];
+      }
+      if (mode === "plasma") {
+        const v = 0.5 + 0.5 * noise(x * 0.9, y * 0.9, t * 0.7);
+        return hsv(20 + v * 50, 0.85, 0.2 + v * 0.8);
+      }
+      if (mode === "clock") {
+        const now = new Date();
+        const hh = now.getHours(), mm = now.getMinutes();
+        const digits = [Math.floor(hh / 10), hh % 10, Math.floor(mm / 10), mm % 10];
+        const origins = [[2, 2], [7, 2], [2, 9], [7, 9]];
+        for (let i = 0; i < 4; i++) {
+          const [ox, oy] = origins[i];
+          const col = x - ox, row = y - oy;
+          if (col >= 0 && col < 3 && row >= 0 && row < 5 && digitMask(digits[i], row, col)) {
+            return [180, 190, 210];
+          }
+        }
+        if (dist > 6.2 && dist < 7.2) return [28, 28, 32];
+        return [0, 0, 0];
+      }
+      if (mode === "rainbow") {
+        const a = Math.atan2(dy, dx) + t;
+        const h = (a * 180 / Math.PI) + dist * 20;
+        if (dist > 7.6) return [0, 0, 0];
+        return hsv(h, 0.9, 0.25 + dist / 10);
+      }
+      if (mode === "matrix") {
+        const colSpeed = 2 + (x % 5);
+        const head = (t * colSpeed * 3 + x * 3) % 20;
+        const trail = (head - y + 40) % 20;
+        if (trail < 6) {
+          const v = (220 - trail * 35) | 0;
+          return [20, v, 40];
+        }
+        return [0, 8, 0];
+      }
+      if (mode === "ripple") {
+        const wave = Math.sin(dist * 1.4 - t * 4);
+        const v = clamp(0.5 + 0.5 * wave, 0, 1);
+        return hsv(200, 0.7, v * 0.9);
+      }
+      if (mode === "spinner") {
+        let a = Math.atan2(dy, dx);
+        a = (a + Math.PI * 2 + t * 3) % (Math.PI * 2);
+        if (dist > 3 && dist < 7 && a < 1.2) return hsv(a * 40, 0.1, 0.95);
+        if (dist <= 1.2) return [40, 40, 48];
+        return [0, 0, 0];
+      }
+      if (mode === "heartbeat") {
+        const beat = Math.pow(Math.max(0, Math.sin(t * 4)), 3);
+        const heart =
+          (Math.pow(dx * dx + dy * dy - 6, 3) - dx * dx * dy * dy * dy) < 0 ||
+          (Math.abs(dx) < 1.2 && dy > -1 && dy < 3 && beat > 0.2);
+        // simpler heart shape on 16x16
+        const hx = x - 8, hy = y - 7;
+        const inHeart =
+          (hx * hx + (hy - Math.abs(hx) * 0.4) * (hy - Math.abs(hx) * 0.4) < 9 && hy > -3) ||
+          ((hx + 2.2) * (hx + 2.2) + (hy + 1.5) * (hy + 1.5) < 4.5) ||
+          ((hx - 2.2) * (hx - 2.2) + (hy + 1.5) * (hy + 1.5) < 4.5);
+        if (inHeart) {
+          const v = 0.45 + 0.55 * beat;
+          return [(v * 220) | 0, (v * 40) | 0, (v * 70) | 0];
+        }
+        return [0, 0, 0];
+      }
+      if (mode === "ocean") {
+        const wave = Math.sin(x * 0.55 + t * 2) * 1.8 + Math.sin(x * 0.2 - t) * 1.2;
+        const level = 9 + wave;
+        if (y > level) {
+          const depth = clamp((y - level) / 6, 0, 1);
+          return [10, (40 + depth * 80) | 0, (90 + depth * 120) | 0];
+        }
+        if (Math.abs(y - level) < 0.8) return [180, 210, 230];
+        return [8, 12, 24];
+      }
+      if (mode === "confetti") {
+        for (const c of confetti) {
+          if (Math.floor(c.x) === x && Math.floor(c.y) === y) return c.c.map(v => v | 0);
+        }
+        return [5, 5, 8];
+      }
+      if (mode === "life") {
+        return life[y * MATRIX + x] ? [120, 220, 140] : [0, 0, 0];
+      }
+      if (mode === "spiral") {
+        const a = Math.atan2(dy, dx);
+        const arm = (a + dist * 0.8 - t * 2 + Math.PI * 2) % (Math.PI * 2);
+        if (arm < 0.55 && dist < 8) return hsv(dist * 25 + t * 40, 0.85, 0.9);
+        return [0, 0, 0];
+      }
+      if (mode === "tunnel") {
+        const a = Math.atan2(dy, dx) + t;
+        const rings = ((dist * 2 - t * 3) % 2 + 2) % 2;
+        const v = rings < 1 ? 0.15 : 0.85;
+        return hsv(a * 180 / Math.PI, 0.7, v);
+      }
+      return [0, 0, 0];
+    }
+
+    function stepLife() {
+      const next = life.slice();
+      for (let y = 0; y < MATRIX; y++) {
+        for (let x = 0; x < MATRIX; x++) {
+          let n = 0;
+          for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+            if (!ox && !oy) continue;
+            const xx = (x + ox + MATRIX) % MATRIX;
+            const yy = (y + oy + MATRIX) % MATRIX;
+            n += life[yy * MATRIX + xx];
+          }
+          const i = y * MATRIX + x;
+          next[i] = (life[i] && (n === 2 || n === 3)) || (!life[i] && n === 3) ? 1 : 0;
+        }
+      }
+      life = next;
+    }
+
+    function updateSims(dt) {
+      const mode = MODES[modeIndex].id;
+      if ((mode === "vinyl" || mode === "progress" || mode === "pulse") && isPlaying) {
+        angle = wrapAngle(angle - 360 * (18 / 60) * dt);
+      }
+      if (mode === "eq") {
+        for (let i = 0; i < 16; i++) {
+          const target = (isPlaying ? 3 : 1) + Math.abs(Math.sin(t * 4 + i * 0.7)) * (isPlaying ? 11 : 5);
+          eq[i] += (target - eq[i]) * Math.min(1, dt * 8);
+        }
+      }
+      if (mode === "rain") for (const d of drops) {
+        d.y += d.v * dt * 18;
+        if (d.y > 16) { d.y = -1; d.x = Math.random() * 16; d.v = 0.2 + Math.random() * 0.4; }
+      }
+      if (mode === "snow") for (const f of flakes) {
+        f.y += f.v * dt * 10;
+        f.x += Math.sin(t + f.y) * dt * 0.8;
+        if (f.y > 16) { f.y = -1; f.x = Math.random() * 16; }
+      }
+      if (mode === "fire") for (const s of sparks) {
+        s.y -= s.v * dt * 20;
+        s.life -= dt;
+        if (s.y < 4 || s.life < 0) { s.y = 15; s.x = Math.random() * 16; s.life = 0.5 + Math.random(); }
+      }
+      if (mode === "confetti") for (const c of confetti) {
+        c.x += c.vx * dt * 20;
+        c.y += c.vy * dt * 20;
+        if (c.y > 16) { c.y = -1; c.x = Math.random() * 16; }
+        if (c.x < 0) c.x = 15;
+        if (c.x > 15) c.x = 0;
+      }
+      if (mode === "life") {
+        lifeTick += dt;
+        if (lifeTick > 0.25) { lifeTick = 0; stepLife(); }
+      }
+    }
+
+    function render() {
+      ctx.fillStyle = "#050506";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      for (let y = 0; y < MATRIX; y++) {
+        for (let x = 0; x < MATRIX; x++) {
+          const [r, g, b] = colorAt(x, y);
+          ctx.fillStyle = `rgb(${r},${g},${b})`;
+          ctx.fillRect(x * (CELL + GAP), y * (CELL + GAP), CELL, CELL);
+        }
+      }
+    }
+
+    function setMode(i) {
+      modeIndex = (i + MODES.length) % MODES.length;
+      document.querySelectorAll("#switcher button").forEach((btn, idx) => {
+        btn.classList.toggle("active", idx === modeIndex);
+      });
+      document.getElementById("badge").textContent = MODES[modeIndex].name;
+      if (MODES[modeIndex].id === "life") {
+        life = Array.from({ length: 256 }, () => Math.random() > 0.72 ? 1 : 0);
+      }
+    }
+
+    function buildSwitcher() {
+      const root = document.getElementById("switcher");
+      root.innerHTML = "";
+      MODES.forEach((m, i) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.innerHTML = `${m.name}<span>${m.desc}</span>`;
+        btn.addEventListener("click", () => setMode(i));
+        root.appendChild(btn);
+      });
+      setMode(0);
+    }
+
+    async function syncSpotify() {
+      if (syncInFlight) return;
+      syncInFlight = true;
+      try {
+        const metaRes = await fetch("/api/meta");
+        const meta = await metaRes.json();
+        if (meta.is_playing) { pausedStreak = 0; isPlaying = true; }
+        else if (++pausedStreak >= 2) isPlaying = false;
+        hasTrack = !!meta.has_track;
+        if (typeof meta.progress === "number") progress = meta.progress;
+
+        const needArt = hasTrack && (meta.art_version !== artVersion || !art);
+        if (needArt) {
+          const artRes = await fetch("/api/art");
+          const artPayload = await artRes.json();
+          if (artPayload.art) {
+            art = artPayload.art;
+            artVersion = artPayload.art_version;
+            if (meta.track_id !== trackId) {
+              trackId = meta.track_id;
+              angle = 0;
+            }
+          }
+        } else if (!hasTrack && art !== null) {
+          art = null;
+          artVersion = meta.art_version;
+          trackId = null;
+        }
+
+        document.getElementById("title").textContent = hasTrack ? meta.title : "Ничего не играет";
+        document.getElementById("artists").textContent = hasTrack ? meta.artists : "Включи Spotify для vinyl / progress / pulse";
+        document.getElementById("status").textContent = meta.status;
+      } catch (err) {
+        document.getElementById("status").textContent = String(err);
+      } finally {
+        syncInFlight = false;
+      }
+    }
+
+    function frame(ts) {
+      const dt = Math.min(0.05, Math.max(0, (ts - lastTs) / 1000));
+      lastTs = ts;
+      t += dt;
+      updateSims(dt);
+      render();
+      requestAnimationFrame(frame);
+    }
+
+    buildSwitcher();
+    document.getElementById("prev").onclick = () => setMode(modeIndex - 1);
+    document.getElementById("next").onclick = () => setMode(modeIndex + 1);
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft") setMode(modeIndex - 1);
+      if (e.key === "ArrowRight") setMode(modeIndex + 1);
+    });
+    syncSpotify();
+    setInterval(syncSpotify, 4000);
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>
