@@ -165,26 +165,27 @@
     ctx.imageSmoothingEnabled = false;
 
     const MODES = [
-      { id: "vinyl", name: "1. Vinyl", desc: "Обложка Spotify крутится как пластинка" },
-      { id: "progress", name: "2. Progress ring", desc: "Винил + дуга прогресса трека" },
-      { id: "pulse", name: "3. Pulse", desc: "Диск дышит яркостью" },
-      { id: "eq", name: "4. Equalizer", desc: "Столбики ритма" },
-      { id: "rain", name: "5. Rain", desc: "Мелкий цифровой дождь" },
-      { id: "fire", name: "6. Fire", desc: "Угли и пламя снизу вверх" },
-      { id: "stars", name: "7. Stars", desc: "Мерцающее небо" },
-      { id: "snow", name: "8. Snow", desc: "Снег" },
-      { id: "plasma", name: "9. Plasma", desc: "Медленная лава / plasma" },
-      { id: "clock", name: "10. Clock", desc: "Орбитальные часы: цифры + секундная точка по кругу" },
-      { id: "rainbow", name: "11. Rainbow swirl", desc: "Радуга, крутится вокруг центра" },
-      { id: "matrix", name: "12. Matrix code", desc: "Зелёные каскады" },
-      { id: "ripple", name: "13. Ripple", desc: "Круги от центра" },
-      { id: "spinner", name: "14. Spinner", desc: "Загрузчик / спиннер" },
-      { id: "heartbeat", name: "15. Heartbeat", desc: "Пульс сердца" },
-      { id: "ocean", name: "16. Ocean", desc: "Волны" },
-      { id: "confetti", name: "17. Confetti", desc: "Конфетти" },
-      { id: "life", name: "18. Game of Life", desc: "Клеточный автомат" },
-      { id: "spiral", name: "19. Spiral", desc: "Спираль" },
-      { id: "tunnel", name: "20. Tunnel", desc: "Туннель вглубь" },
+      { id: "ghost", name: "Ghost", desc: "Красный чудик — глазки и юбочка" },
+      { id: "vinyl", name: "Vinyl", desc: "Обложка Spotify крутится как пластинка" },
+      { id: "progress", name: "Progress ring", desc: "Винил + дуга прогресса трека" },
+      { id: "pulse", name: "Pulse", desc: "Диск дышит яркостью" },
+      { id: "eq", name: "Equalizer", desc: "Столбики ритма" },
+      { id: "rain", name: "Rain", desc: "Мелкий цифровой дождь" },
+      { id: "fire", name: "Fire", desc: "Угли и пламя снизу вверх" },
+      { id: "stars", name: "Stars", desc: "Мерцающее небо" },
+      { id: "snow", name: "Snow", desc: "Снег" },
+      { id: "plasma", name: "Plasma", desc: "Медленная лава / plasma" },
+      { id: "clock", name: "Clock", desc: "Орбитальные часы" },
+      { id: "rainbow", name: "Rainbow swirl", desc: "Радуга вокруг центра" },
+      { id: "matrix", name: "Matrix code", desc: "Зелёные каскады" },
+      { id: "ripple", name: "Ripple", desc: "Круги от центра" },
+      { id: "spinner", name: "Spinner", desc: "Загрузчик" },
+      { id: "heartbeat", name: "Heartbeat", desc: "Пульс сердца" },
+      { id: "ocean", name: "Ocean", desc: "Волны" },
+      { id: "confetti", name: "Confetti", desc: "Конфетти" },
+      { id: "life", name: "Game of Life", desc: "Клеточный автомат" },
+      { id: "spiral", name: "Spiral", desc: "Спираль" },
+      { id: "tunnel", name: "Tunnel", desc: "Туннель вглубь" },
     ];
 
     let modeIndex = 0;
@@ -278,12 +279,56 @@
       return !!(DIG[d][row] & (4 >> col));
     }
 
+    function ghostColor(x, y) {
+      // Pac-Man Blinky-style ghost on 16x16.
+      const foot = Math.floor(t * 5) % 2;
+      const look = Math.floor(t * 0.75) % 4; // 0 right, 1 down, 2 left, 3 up
+
+      const body = [
+        "................",
+        "......RRRR......",
+        "....RRRRRRRR....",
+        "...RRRRRRRRRR...",
+        "..RRRRRRRRRRRR..",
+        "..RRRRRRRRRRRR..",
+        ".RRRRRRRRRRRRRR.",
+        ".RRRRRRRRRRRRRR.",
+        ".RRRRRRRRRRRRRR.",
+        ".RRRRRRRRRRRRRR.",
+        ".RRRRRRRRRRRRRR.",
+        ".RRRRRRRRRRRRRR.",
+        ".RRRRRRRRRRRRRR.",
+        foot === 0 ? ".RRR.RRRR.RRRR.." : "..RRR.RR.RRR.RR.",
+        foot === 0 ? "RRR...RR...RRR.." : ".RRR.....RRR....",
+        "................",
+      ];
+
+      if ((body[y] || "")[x] !== "R") return [0, 0, 0];
+
+      const inLeftEye = x >= 3 && x <= 6 && y >= 5 && y <= 8;
+      const inRightEye = x >= 9 && x <= 12 && y >= 5 && y <= 8;
+      if (!inLeftEye && !inRightEye) return [230, 40, 40];
+
+      let px = 2, py = 1;
+      if (look === 1) { px = 1; py = 2; }
+      else if (look === 2) { px = 0; py = 1; }
+      else if (look === 3) { px = 1; py = 0; }
+
+      const lx = x - 3, ly = y - 5;
+      const rx = x - 9, ry = y - 5;
+      const pupilLeft = inLeftEye && lx >= px && lx < px + 2 && ly >= py && ly < py + 2;
+      const pupilRight = inRightEye && rx >= px && rx < px + 2 && ry >= py && ry < py + 2;
+      if (pupilLeft || pupilRight) return [40, 160, 220];
+      return [250, 250, 255];
+    }
+
     function colorAt(x, y) {
       const mode = MODES[modeIndex].id;
       const cx = 7.5, cy = 7.5;
       const dx = x - cx, dy = y - cy;
       const dist = Math.hypot(dx, dy);
 
+      if (mode === "ghost") return ghostColor(x, y);
       if (mode === "vinyl") return vinylColor(x, y, angle, 1, -1);
       if (mode === "progress") return vinylColor(x, y, angle, 1, progress);
       if (mode === "pulse") {
