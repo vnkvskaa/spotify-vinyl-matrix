@@ -62,11 +62,17 @@
     }
   </style>
 </head>
-<body>
+<body style="background:#111114;color:#ececf1;margin:0;padding:28px;font-family:sans-serif;">
   <h1>30 вариантов часов на 16×16</h1>
-  <p class="lead">Статичные эскизы без анимации. Везде одно время 14:37 — чтобы сравнивать раскладку, а не движение.</p>
+  <p class="lead" id="lead">Статичные эскизы без анимации. Везде одно время 14:37 — чтобы сравнивать раскладку, а не движение.</p>
+  <p id="err" style="display:none;color:#ff8f8f;white-space:pre-wrap;"></p>
   <div class="grid" id="grid"></div>
   <script>
+    window.onerror = (msg, src, line) => {
+      const el = document.getElementById('err');
+      el.style.display = 'block';
+      el.textContent = 'JS error: ' + msg + ' @' + line;
+    };
     const N = 16;
     const CELL = 10;
     const GAP = 1;
