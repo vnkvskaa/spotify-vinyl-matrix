@@ -334,17 +334,17 @@ PAGE_HTML = """<!doctype html>
     .matrix {
       width: min(360px, 80vw);
       aspect-ratio: 1;
-      display: grid;
-      grid-template-columns: repeat(16, 1fr);
-      grid-template-rows: repeat(16, 1fr);
-      gap: 3px;
       padding: 10px;
       background: #09090b;
       border-radius: 12px;
+      image-rendering: pixelated;
     }
-    .led {
-      border-radius: 2px;
-      background: var(--led);
+    .matrix canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      border-radius: 4px;
+      image-rendering: pixelated;
     }
     .meta h1 {
       margin: 0 0 8px;
@@ -384,7 +384,7 @@ PAGE_HTML = """<!doctype html>
 <body>
   <div class="wrap">
     <div class="stage">
-      <div class="matrix" id="matrix"></div>
+      <div class="matrix"><canvas id="matrix" width="16" height="16"></canvas></div>
       <div class="badge" id="mode">connecting</div>
     </div>
     <div class="meta">
@@ -400,14 +400,10 @@ PAGE_HTML = """<!doctype html>
   <script>
     const MATRIX = 16;
     const RPM = 18;
-    const matrix = document.getElementById("matrix");
-    const leds = [];
-    for (let i = 0; i < MATRIX * MATRIX; i++) {
-      const d = document.createElement("div");
-      d.className = "led";
-      matrix.appendChild(d);
-      leds.push(d);
-    }
+    const canvas = document.getElementById("matrix");
+    const ctx = canvas.getContext("2d", { alpha: false });
+    const imageData = ctx.createImageData(MATRIX, MATRIX);
+    const buf = imageData.data;
 
     let art = null;
     let artVersion = -1;
@@ -417,6 +413,7 @@ PAGE_HTML = """<!doctype html>
     let pausedStreak = 0;
     let angle = 0;
     let lastTs = performance.now();
+    let syncInFlight = false;
 
     function sampleArt(fx, fy) {
       const x = Math.floor(fx);
@@ -426,7 +423,7 @@ PAGE_HTML = """<!doctype html>
     }
 
     function wrapAngle(deg) {
-      deg = deg % 360;
+      deg %= 360;
       if (deg < 0) deg += 360;
       return deg;
     }
@@ -440,16 +437,13 @@ PAGE_HTML = """<!doctype html>
       const rad = angleDeg * Math.PI / 180;
       const cosA = Math.cos(rad);
       const sinA = Math.sin(rad);
-
-      // Fixed marker angle in "vinyl space" so a full rotation is obvious on 16x16.
       const markerLocalX = radius * 0.82;
-      const markerLocalY = 0;
 
       for (let y = 0; y < MATRIX; y++) {
         for (let x = 0; x < MATRIX; x++) {
           const dx = x - cx;
           const dy = y - cy;
-          const dist = Math.sqrt(dx * dx + dy * dy);
+          const dist = Math.hypot(dx, dy);
           let r = 0, g = 0, b = 0;
 
           if (!hasTrack || !art) {
@@ -457,7 +451,6 @@ PAGE_HTML = """<!doctype html>
               r = g = 28; b = 32;
             }
           } else if (dist <= radius) {
-            // Rotate album art with the disc.
             const sx = cosA * dx + sinA * dy + cx;
             const sy = -sinA * dx + cosA * dy + cy;
             [r, g, b] = sampleArt(sx, sy);
@@ -469,52 +462,66 @@ PAGE_HTML = """<!doctype html>
             if (dist > radius - 0.85) {
               r = (r * 0.55) | 0; g = (g * 0.55) | 0; b = (b * 0.55) | 0;
             }
-
-            // Bright rim tick that travels a true full circle.
-            const mx = cosA * markerLocalX - sinA * markerLocalY;
-            const my = sinA * markerLocalX + cosA * markerLocalY;
+            const mx = cosA * markerLocalX;
+            const my = sinA * markerLocalX;
             if (Math.abs(dx - mx) < 0.75 && Math.abs(dy - my) < 0.75 && dist > labelR) {
               r = 255; g = 240; b = 220;
             }
           }
-          leds[y * MATRIX + x].style.background = `rgb(${r},${g},${b})`;
+
+          const i = (y * MATRIX + x) * 4;
+          buf[i] = r; buf[i + 1] = g; buf[i + 2] = b; buf[i + 3] = 255;
         }
       }
+      ctx.putImageData(imageData, 0, 0);
     }
 
     async function syncSpotify() {
+      if (syncInFlight) return;
+      syncInFlight = true;
       try {
-        const res = await fetch("/api/state");
-        const data = await res.json();
-        hasTrack = !!data.has_track;
+        // Tiny meta payload every few seconds — art is fetched only when version changes.
+        const metaRes = await fetch("/api/meta");
+        const meta = await metaRes.json();
 
-        if (data.is_playing) {
+        if (meta.is_playing) {
           pausedStreak = 0;
           isPlaying = true;
-        } else {
-          pausedStreak += 1;
-          // Ignore brief Spotify "paused" glitches so spin doesn't restart mid-circle.
-          if (pausedStreak >= 2) isPlaying = false;
+        } else if (++pausedStreak >= 2) {
+          isPlaying = false;
         }
 
-        if (data.art_version !== artVersion) {
-          artVersion = data.art_version;
-          art = data.art;
-          // Reset angle only when the track actually changes.
-          if (data.track_id !== trackId) {
-            trackId = data.track_id;
-            angle = 0;
+        hasTrack = !!meta.has_track;
+
+        if (meta.art_version !== artVersion) {
+          if (meta.has_track) {
+            const artRes = await fetch("/api/art");
+            const artPayload = await artRes.json();
+            if (artPayload.art_version === meta.art_version) {
+              art = artPayload.art;
+              artVersion = artPayload.art_version;
+              if (meta.track_id !== trackId) {
+                trackId = meta.track_id;
+                angle = 0;
+              }
+            }
+          } else {
+            art = null;
+            artVersion = meta.art_version;
+            trackId = null;
           }
         }
 
-        document.getElementById("title").textContent = hasTrack ? data.title : "Ничего не играет";
-        document.getElementById("artists").textContent = hasTrack ? data.artists : "Включи трек в Spotify";
-        document.getElementById("status").textContent = data.status;
+        document.getElementById("title").textContent = hasTrack ? meta.title : "Ничего не играет";
+        document.getElementById("artists").textContent = hasTrack ? meta.artists : "Включи трек в Spotify";
+        document.getElementById("status").textContent = meta.status;
         document.getElementById("mode").textContent = hasTrack
           ? (isPlaying ? "playing · vinyl" : "paused · vinyl")
           : "idle";
       } catch (err) {
         document.getElementById("status").textContent = String(err);
+      } finally {
+        syncInFlight = false;
       }
     }
 
@@ -529,7 +536,7 @@ PAGE_HTML = """<!doctype html>
     }
 
     syncSpotify();
-    setInterval(syncSpotify, 3000);
+    setInterval(syncSpotify, 4000);
     requestAnimationFrame(frame);
   </script>
 </body>
@@ -544,6 +551,42 @@ def make_handler(state: FrameState):
                 body = PAGE_HTML.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if self.path.startswith("/api/meta"):
+                with state.lock:
+                    payload = {
+                        "art_version": state.art_version,
+                        "is_playing": state.is_playing,
+                        "has_track": state.has_track,
+                        "title": state.title,
+                        "artists": state.artists,
+                        "track_id": state.track_id,
+                        "status": state.status,
+                        "updated_at": state.updated_at,
+                    }
+                body = json.dumps(payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if self.path.startswith("/api/art"):
+                with state.lock:
+                    payload = {
+                        "art": state.art,
+                        "art_version": state.art_version,
+                    }
+                body = json.dumps(payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -623,7 +666,7 @@ def spotify_poll_loop(session: SpotifySession, state: FrameState) -> None:
                 state.status = f"error: {exc}"
             print("Spotify poll error:", exc)
 
-        time.sleep(3.0)
+        time.sleep(4.0)
 
 
 def main() -> None:
