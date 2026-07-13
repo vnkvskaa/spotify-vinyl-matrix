@@ -57,6 +57,28 @@ python3 scripts/get_spotify_token.py
 
 5. Скрипт выведет `SPOTIFY_REFRESH_TOKEN`
 
+## Виртуальная матрица (пока нет железа)
+
+Можно уже сейчас смотреть, как **реальные обложки Spotify** выглядят на 16×16:
+
+1. Создай приложение на [Spotify Developer Dashboard](https://developer.spotify.com/dashboard/)
+2. Redirect URI: `http://127.0.0.1:8888/callback`
+3. Скопируй `.env.example` → `.env` и впиши Client ID / Secret
+4. Один раз получи токен:
+
+```bash
+pip install -r requirements-preview.txt
+python3 scripts/get_spotify_token.py
+```
+
+5. Запусти превью:
+
+```bash
+python3 scripts/preview_spotify_matrix.py
+```
+
+Откроется `http://127.0.0.1:8765`: живой опрос Spotify → обложка → диск 16×16 с вращением.
+
 ## Прошивка
 
 ```bash

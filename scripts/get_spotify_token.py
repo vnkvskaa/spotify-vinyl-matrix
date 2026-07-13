@@ -27,6 +27,22 @@ def ask(prompt: str) -> str:
     return value
 
 
+def save_env(client_id: str, client_secret: str) -> None:
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    env_path.write_text(
+        "\n".join(
+            [
+                f"SPOTIFY_CLIENT_ID={client_id}",
+                f"SPOTIFY_CLIENT_SECRET={client_secret}",
+                f"SPOTIFY_REDIRECT_URI={REDIRECT_URI}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    print(f"Saved credentials to {env_path}")
+
+
 def post_token(client_id: str, client_secret: str, data: dict[str, str]) -> dict:
     basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
     body = urllib.parse.urlencode(data).encode()
@@ -85,6 +101,7 @@ def main() -> None:
     print()
     client_id = ask("Client ID: ")
     client_secret = ask("Client Secret: ")
+    save_env(client_id, client_secret)
 
     state = secrets.token_urlsafe(16)
     CallbackHandler.expected_state = state
