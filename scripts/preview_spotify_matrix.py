@@ -295,6 +295,7 @@ def parse_playback(playback: dict[str, Any] | None) -> tuple[bool, bool, str, st
 
 
 PREVIEW_HTML = ROOT / "preview" / "index.html"
+CLOCK_GALLERY_HTML = ROOT / "preview" / "clock-gallery.html"
 
 
 def load_preview_html() -> bytes:
@@ -303,11 +304,26 @@ def load_preview_html() -> bytes:
     return PREVIEW_HTML.read_bytes()
 
 
+def load_clock_gallery_html() -> bytes:
+    if not CLOCK_GALLERY_HTML.exists():
+        raise FileNotFoundError(f"Missing clock gallery: {CLOCK_GALLERY_HTML}")
+    return CLOCK_GALLERY_HTML.read_bytes()
+
+
 def make_handler(state: FrameState):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             if self.path == "/" or self.path.startswith("/index"):
                 body = load_preview_html()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if self.path.startswith("/clocks"):
+                body = load_clock_gallery_html()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -459,9 +475,10 @@ def main() -> None:
     server = ThreadingHTTPServer((HOST, PORT), make_handler(state))
     url = f"http://{HOST}:{PORT}"
     print(f"Virtual matrix: {url}")
+    print(f"Clock gallery: {url}/clocks")
     print("Play something on Spotify, watch the 16x16 disc update.")
     print("Restart this script if it was already running, then refresh the browser.")
-    webbrowser.open(url)
+    webbrowser.open(f"{url}/clocks")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
